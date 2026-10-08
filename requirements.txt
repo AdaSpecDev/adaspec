@@ -1,14 +1,11 @@
-# Primary runtime dependency. This pins PyTorch and the native CUDA stack.
-# Install via scripts/setup.sh for the editable vLLM patch and model snapshots.
+# Resolve runtime dependencies against the matching upstream release.
+# setup.py installs the fork itself in editable mode, rather than this wheel.
 vllm==0.22.0
 
-# Tools required for a Python-only editable vLLM installation.
+# Tools needed for the Python-only editable installation.
 setuptools>=77,<81
 setuptools-scm>=8
 setuptools-rust>=1.9
 wheel
 packaging>=24.2
-jinja2
-cmake>=3.26.1
-ninja
-pre-commit
+jinja2>=3.1.6
