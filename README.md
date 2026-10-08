@@ -1,101 +1,101 @@
-# AdaSpec: controlled live-batch pilot
+# AdaSpec
 
-First milestone: one H100 run demonstrating that recorded target passes contain
-our intended full speculative batches. This is a measurement validation pilot,
-not evidence for the heterogeneity hypothesis yet.
+We study how the context lengths within a speculative decoding batch affect
+verification cost. The research proposal is in [AdaSpec.pdf](AdaSpec.pdf).
 
-## Pinned choices
+**This PR sets up the environment only.** Batch inspection, an example runner,
+and GPU measurements will be added after review.
 
-- vLLM v0.22.0, commit `0b3ba88f165976e77ca5e6a7a3f5bba4562b80af`.
-- Python 3.12; released CUDA 12.9 binary, matching PyTorch dependency.
-- Qwen/Qwen3-8B target and Qwen/Qwen3-0.6B draft, TP=1, BF16.
-  Model commits are recorded in `config/models.lock.json` before inference.
-- FlashAttention, eager execution, synchronous scheduling, prefix caching off.
-- B=8, K=3; 4096 x 8 versus 1024 x 4 + 7168 x 4 prompt tokens.
-- Greedy decoding, ignore EOS, 96 output tokens; one warmup and three repeats.
-  Mixture order alternates. Prompts are saved as exact token IDs.
+## Get started on PSC
 
-Eager/synchronous execution simplifies live-state auditing. CUDA synchronization
-around every transformer forward perturbs execution; production throughput and
-controller benefit must be measured later with lighter instrumentation.
-
-## Setup and run
-
-`requirements.txt` lists the direct dependencies. The resolved dependency lock
-is saved under `config/requirements.lock.txt` after installation. The setup script
-also installs our editable source patch and downloads the model weights.
-
-All caches, weights, environments and large run artifacts live under the user's
-personal PSC project directory. The experiment harness stays in the home workspace. The vLLM checkout also
-lives in project storage because editable installation extracts large native
-libraries there; a workspace symlink preserves the VS Code path.
+You need Git, `uv`, and access to your personal Bridges-2 project directory.
 
 ```bash
-bash scripts/setup.sh
-sbatch slurm/pilot.sbatch
+git clone https://github.com/AdaSpecDev/adaspec.git
+cd adaspec
+bash setup.sh
+source /ocean/projects/cis260267p/$USER/adaspec/.venv/bin/activate
 ```
 
-`setup.sh` creates a project-storage vLLM checkout if needed, verifies its base commit,
-applies the version-specific patch, installs matching released native binaries
-with editable Python, and prepares pinned model snapshots. Reinstallation is
-required after changing the native base; Python edits require restarting the job.
-No GitHub vLLM fork is required to reproduce the pilot: the base SHA and patch
-are both recorded here. A separate fork can be added when integration expands.
+Setup downloads Python 3.12 if needed, installs the locked dependencies, checks
+out the pinned [team vLLM fork](https://github.com/AdaSpecDev/vllm), and installs
+it in editable mode with matching native libraries. It then checks imports and
+dependency compatibility. You do not need a GPU to perform this setup.
 
-Run artifacts are at `/ocean/projects/cis260267p/vdonde/adaspec/runs/pilot-JOBID`:
+Setup does not submit jobs or download models. The first install is several GB
+and may take time: PSC's glibc requires building `llguidance` from source.
 
-- `manifest.json`, `environment.txt`, `vllm.patch`, hardware details.
-- `workloads.json`: exact prompt token IDs; `trials.json`: request/output mapping.
-- `traces/target-*.jsonl`: per-target-pass records including prefill.
-- `validation.json`: fail-closed validation; `features.csv`: qualifying passes.
-
-Inspect the trace yourself:
+For another personal storage location:
 
 ```bash
-source scripts/env.sh
-python scripts/analyze.py "$ADASPEC_STORAGE/runs/pilot-JOBID"
-head -n 2 "$ADASPEC_STORAGE/runs/pilot-JOBID"/traces/target-*.jsonl
+export ADASPEC_STORAGE=/path/to/your/project/adaspec
+bash setup.sh
+source "$ADASPEC_STORAGE/.venv/bin/activate"
 ```
 
-## What is measured
+## Where things live
 
-`cached_tokens` is the scheduler's already computed token count before the pass;
-`worker_cached_tokens` independently records the worker's view.
-`query_tokens` includes the new target input and proposed tokens;
-`attention_sequence_tokens` is worker cached length plus this query.
-`allocated_blocks_by_group` counts actual allocated blocks, including lookahead;
-it is not an estimate from sequence length and does not equal occupied KV tokens.
+| Location | Contents |
+| --- | --- |
+| Your AdaSpec clone | Configuration, setup code, documentation, paper |
+| `$ADASPEC_STORAGE/.venv` | Python environment |
+| `$ADASPEC_STORAGE/vllm` | Editable checkout of the team fork |
+| `$ADASPEC_STORAGE/cache` | Downloaded packages, native wheel, compiler caches |
+| `$ADASPEC_STORAGE/python` | Python interpreter managed by `uv` |
 
-CUDA events bracket **target transformer forward only**, excluding logits,
-rejection sampling, drafting and scheduling. Separate feedback traces record
-accepted draft counts and scheduler-capture-to-feedback wall time; this wall
-interval excludes scheduler construction and is not full decode-step timing. This pilot does not yet isolate
-attention kernels or measure a complete verification/step boundary. Trial elapsed
-time is an instrumented workload duration, not production serving latency.
+Without an override, storage is `/ocean/projects/cis260267p/$USER/adaspec`.
+Everything is in your personal space. Generated files stay outside the repo.
 
-Validation requires at least five full, pure decode passes per trial, exact
-prompt distributions, no preemption, matching scheduler/worker lengths, and K
-actual draft tokens with K+1 query tokens per request. Startup and tail passes
-with fewer drafts or requests are excluded and counted. Live means drift as
-acceptance commits different lengths: CSV rows expose this, and unadjusted
-mixture timing summaries must not be treated as equal-mean comparisons.
+If setup finds an existing vLLM checkout with edits or a different `origin`, it
+stops and explains the conflict. It does not discard your work. You can rerun
+setup to repair or recreate the environment; it synchronizes packages to the lock.
 
-## Source map
+## Files to read
 
-- `vllm/v1/core/sched/scheduler.py`: scheduling and actual KV block allocation.
-- `vllm/v1/core/sched/output.py`: metadata carried to the worker.
-- `vllm/v1/worker/gpu_model_runner.py`: target forward boundary.
-- `vllm/v1/adaspec_trace.py`: opt-in capture (`ADASPEC_TRACE_DIR`).
+| File | What it controls |
+| --- | --- |
+| `experiment.json` | Fork URL, exact source commit, matching native wheel, Python/PyTorch pins, and model revisions reserved for the next step |
+| `setup.sh` | Small launcher that bootstraps Python and selects personal storage |
+| `setup.py` | Checkout, installation, and verification steps |
+| `requirements.txt` | Runtime/build requirements used to generate the lock |
+| `requirements.lock.txt` | Generated exact versions; most entries are vLLM dependencies |
+| `.gitignore` | Keeps local environments and generated files out of Git |
 
-Instrumentation is disabled when the environment variable is absent. The pilot
-runs only on one GPU, so the schema makes no claims about distributed timing.
+For now, the team fork is pinned to unmodified upstream v0.22.0. The inspector
+PR will add ordinary commits to that fork; a follow-up here will update the pin.
+There are no patch files or automatic patch application.
 
-## Remaining gates before scientific sweeps
+## Check your installation
 
-1. Successful environment import, model startup and live-batch validation on GPU.
-2. Greedy target-only versus speculative output comparison; validate acceptance feedback.
-3. Full verification boundary, attention profiler decomposition and overhead check.
-4. Equal-live-mean matching/control, repeated trials and held-out mixture analysis.
-5. SWE-bench content with documented prompt construction and tokenizer lengths.
+After activating the environment:
 
-AI assistance was used to prepare this research code. No upstream PR is created.
+```bash
+python -c 'import vllm; print(vllm.__file__)'
+```
+
+The path should end in `adaspec/vllm/vllm/__init__.py` under your chosen storage.
+Python edits there are picked up when a new process starts. Do not update the
+source pin without checking native-wheel compatibility.
+
+## Updating dependencies
+
+`requirements.txt` describes the upstream runtime used for resolution and the
+build tools needed for editable installation. Setup installs the fork itself,
+not the upstream Python wheel. To regenerate the lock with the current tools:
+
+```bash
+uv pip compile requirements.txt --python-version 3.12 --torch-backend cu129 \
+  --no-emit-package vllm --no-annotate --no-header \
+  --output-file requirements.lock.txt
+```
+
+The command omits vLLM itself because setup installs the editable fork. Commit
+dependency changes with the corresponding config changes and rerun setup. A change to the pinned base/native wheel needs a fresh
+compatibility check.
+
+## Next step
+
+After this setup PR is reviewed, we will add a metadata-only batch inspector and
+one offline inference example in the vLLM fork. Timing and controlled experiments
+will follow separately. The old implementation remains in Git history at
+`c447508`; its pilot was cancelled before it ran.
