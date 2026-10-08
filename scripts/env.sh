@@ -15,3 +15,5 @@ export RUSTUP_HOME="$ADASPEC_STORAGE/cache/rustup"
 export CARGO_BUILD_JOBS=2
 
 export VLLM_CHECKOUT="${VLLM_CHECKOUT:-$ADASPEC_STORAGE/vllm}"
+# Ensure spawned workers resolve the checkout even from its parent directory.
+export PYTHONPATH="$VLLM_CHECKOUT${PYTHONPATH:+:$PYTHONPATH}"
